@@ -3,19 +3,31 @@
   // Convenience aliases.
   var getClass = {}.toString, isProperty, forEach, undef;
 
-  // Detect the `define` function exposed by asynchronous module loaders and set
-  // up the internal `JSON3` namespace. The strict equality check for `define`
-  // is necessary for compatibility with the RequireJS optimizer (`r.js`).
-  var isLoader = typeof define === "function" && define.amd, JSON3 = typeof exports == "object" && exports;
+  // Detect the `define` function exposed by asynchronous module loaders. The
+  // strict `define` check is necessary for compatibility with `r.js`.
+  var isLoader = typeof define === "function" && define.amd, JSON3 = !isLoader && typeof exports == "object" && exports;
 
-  // A JSON source string used to test the native `stringify` and `parse`
-  // implementations.
-  var serialized = '{"A":[1,true,false,null,"\\u0000\\b\\n\\f\\r\\t"]}';
+  if (JSON3 || isLoader) {
+    if (typeof JSON == "object" && JSON) {
+      // Delegate to the native `stringify` and `parse` implementations in
+      // asynchronous module loaders and CommonJS environments.
+      if (isLoader) {
+        JSON3 = JSON;
+      } else {
+        JSON3.stringify = JSON.stringify;
+        JSON3.parse = JSON.parse;
+      }
+    } else if (isLoader) {
+      JSON3 = this.JSON = {};
+    }
+  } else {
+    // Export for web browsers and JavaScript engines.
+    JSON3 = this.JSON || (this.JSON = {});
+  }
 
-  // Feature tests to determine whether the native `JSON.stringify` and `parse`
-  // implementations are spec-compliant. Based on work by Ken Snyder.
-  var stringifySupported, Escapes, toPaddedString, quote, serialize;
-  var parseSupported, fromCharCode, Unescapes, abort, lex, get, walk, update, Index, Source;
+  // Local variables.
+  var Escapes, toPaddedString, quote, serialize;
+  var fromCharCode, Unescapes, abort, lex, get, walk, update, Index, Source;
 
   // Test the `Date#getUTC*` methods. Based on work by @Yaffle.
   var value = new Date(-3509827334573292), floor, Months, getDay;
@@ -43,124 +55,110 @@
     };
   }
 
-  // Export JSON 3 for asynchronous module loaders, CommonJS environments, web
-  // browsers, and JavaScript engines. Credits: Oyvind Sean Kinsey.
-  if (isLoader || JSON3) {
-    if (isLoader) {
-      // The `JSON3` namespace is redefined because module loaders do not
-      // provide the `exports` object.
-      JSON3 = {};
+  // Feature tests to determine whether the native `JSON.stringify` and `parse`
+  // implementations are spec-compliant. Based on work by Ken Snyder.
+  function has(name) {
+    var stringifySupported = false, parseSupported = false, value, serialized = '{"A":[1,true,false,null,"\\u0000\\b\\n\\f\\r\\t"]}';
+    // Test `JSON.stringify`.
+    if ((stringifySupported = typeof JSON3.stringify == "function" && !getDay)) {
+      // A test function object with a custom `toJSON` method.
+      (value = function () {
+        return 1;
+      }).toJSON = value;
+      try {
+        stringifySupported =
+          // Firefox 3.1b1 and b2 serialize string, number, and boolean
+          // primitives as object literals.
+          JSON3.stringify(0) === "0" &&
+          // FF 3.1b1, b2, and JSON 2 serialize wrapped primitives as object
+          // literals.
+          JSON3.stringify(new Number()) === "0" &&
+          JSON3.stringify(new String()) == '""' &&
+          // FF 3.1b1, 2 throw an error if the value is `null`, `undefined`, or
+          // does not define a canonical JSON representation (this applies to
+          // objects with `toJSON` properties as well, *unless* they are nested
+          // within an object or array).
+          JSON3.stringify(getClass) === undef &&
+          // IE 8 serializes `undefined` as `"undefined"`. Safari 5.1.2 and FF
+          // 3.1b3 pass this test.
+          JSON3.stringify(undef) === undef &&
+          // Safari 5.1.2 and FF 3.1b3 throw `Error`s and `TypeError`s,
+          // respectively, if the value is omitted entirely.
+          JSON3.stringify() === undef &&
+          // FF 3.1b1, 2 throw an error if the given value is not a number,
+          // string, array, object, Boolean, or `null` literal. This applies to
+          // objects with custom `toJSON` methods as well, unless they are nested
+          // inside object or array literals. YUI 3.0.0b1 ignores custom `toJSON`
+          // methods entirely.
+          JSON3.stringify(value) === "1" &&
+          JSON3.stringify([value]) == "[1]" &&
+          // Prototype <= 1.6.1 serializes `[undefined]` as `"[]"` instead of
+          // `"[null]"`.
+          JSON3.stringify([undef]) == "[null]" &&
+          // YUI 3.0.0b1 fails to serialize `null` literals.
+          JSON3.stringify(null) == "null" &&
+          // FF 3.1b1, 2 halts serialization if an array contains a function:
+          // `[1, true, getClass, 1]` serializes as "[1,true,],". These versions
+          // of Firefox also allow trailing commas in JSON objects and arrays.
+          // FF 3.1b3 elides non-JSON values from objects and arrays, unless they
+          // define custom `toJSON` methods.
+          JSON3.stringify([undef, getClass, null]) == "[null,null,null]" &&
+          // Simple serialization test. FF 3.1b1 uses Unicode escape sequences
+          // where character escape codes are expected (e.g., `\b` => `\u0008`).
+          JSON3.stringify({ "A": [value, true, false, null, "\0\b\n\f\r\t"] }) == serialized &&
+          // FF 3.1b1 and b2 ignore the `filter` and `width` arguments.
+          JSON3.stringify(null, value) === "1" &&
+          JSON3.stringify([1, 2], null, 1) == "[\n 1,\n 2\n]" &&
+          // JSON 2, Prototype <= 1.7, and older WebKit builds incorrectly
+          // serialize extended years.
+          JSON3.stringify(new Date(-8.64e15)) == '"-271821-04-20T00:00:00.000Z"' &&
+          // The milliseconds are optional in ES 5, but required in 5.1.
+          JSON3.stringify(new Date(8.64e15)) == '"+275760-09-13T00:00:00.000Z"' &&
+          // Firefox <= 11.0 incorrectly serializes years prior to 0 as negative
+          // four-digit years instead of six-digit years. Credits: @Yaffle.
+          JSON3.stringify(new Date(-621987552e5)) == '"-000001-01-01T00:00:00.000Z"' &&
+          // Safari <= 5.1.5 and Opera >= 10.53 incorrectly serialize millisecond
+          // values less than 1000. Credits: @Yaffle.
+          JSON3.stringify(new Date(-1)) == '"1969-12-31T23:59:59.999Z"';
+      } catch (exception) {
+        stringifySupported = false;
+      }
     }
-    if (typeof JSON == "object" && JSON) {
-      // Delegate to the native `stringify` and `parse` implementations in
-      // asynchronous module loaders and CommonJS environments.
-      JSON3.stringify = JSON.stringify;
-      JSON3.parse = JSON.parse;
-    }
-  } else {
-    // Export for browsers and JavaScript engines.
-    JSON3 = this.JSON || (this.JSON = {});
-  }
-
-  // Test `JSON.stringify`.
-  if ((stringifySupported = typeof JSON3.stringify == "function" && !getDay)) {
-    // A test function object with a custom `toJSON` method.
-    (value = function () {
-      return 1;
-    }).toJSON = value;
-    try {
-      stringifySupported =
-        // Firefox 3.1b1 and b2 serialize string, number, and boolean
-        // primitives as object literals.
-        JSON3.stringify(0) === "0" &&
-        // FF 3.1b1, b2, and JSON 2 serialize wrapped primitives as object
-        // literals.
-        JSON3.stringify(new Number()) === "0" &&
-        JSON3.stringify(new String()) == '""' &&
-        // FF 3.1b1, 2 throw an error if the value is `null`, `undefined`, or
-        // does not define a canonical JSON representation (this applies to
-        // objects with `toJSON` properties as well, *unless* they are nested
-        // within an object or array).
-        JSON3.stringify(getClass) === undef &&
-        // IE 8 serializes `undefined` as `"undefined"`. Safari 5.1.2 and FF
-        // 3.1b3 pass this test.
-        JSON3.stringify(undef) === undef &&
-        // Safari 5.1.2 and FF 3.1b3 throw `Error`s and `TypeError`s,
-        // respectively, if the value is omitted entirely.
-        JSON3.stringify() === undef &&
-        // FF 3.1b1, 2 throw an error if the given value is not a number,
-        // string, array, object, Boolean, or `null` literal. This applies to
-        // objects with custom `toJSON` methods as well, unless they are nested
-        // inside object or array literals. YUI 3.0.0b1 ignores custom `toJSON`
-        // methods entirely.
-        JSON3.stringify(value) === "1" &&
-        JSON3.stringify([value]) == "[1]" &&
-        // Prototype <= 1.6.1 serializes `[undefined]` as `"[]"` instead of
-        // `"[null]"`.
-        JSON3.stringify([undef]) == "[null]" &&
-        // YUI 3.0.0b1 fails to serialize `null` literals.
-        JSON3.stringify(null) == "null" &&
-        // FF 3.1b1, 2 halts serialization if an array contains a function:
-        // `[1, true, getClass, 1]` serializes as "[1,true,],". These versions
-        // of Firefox also allow trailing commas in JSON objects and arrays.
-        // FF 3.1b3 elides non-JSON values from objects and arrays, unless they
-        // define custom `toJSON` methods.
-        JSON3.stringify([undef, getClass, null]) == "[null,null,null]" &&
-        // Simple serialization test. FF 3.1b1 uses Unicode escape sequences
-        // where character escape codes are expected (e.g., `\b` => `\u0008`).
-        JSON3.stringify({ "result": [value, true, false, null, "\0\b\n\f\r\t"] }) == serialized &&
-        // FF 3.1b1 and b2 ignore the `filter` and `width` arguments.
-        JSON3.stringify(null, value) === "1" &&
-        JSON3.stringify([1, 2], null, 1) == "[\n 1,\n 2\n]" &&
-        // JSON 2, Prototype <= 1.7, and older WebKit builds incorrectly
-        // serialize extended years.
-        JSON3.stringify(new Date(-8.64e15)) == '"-271821-04-20T00:00:00.000Z"' &&
-        // The milliseconds are optional in ES 5, but required in 5.1.
-        JSON3.stringify(new Date(8.64e15)) == '"+275760-09-13T00:00:00.000Z"' &&
-        // Firefox <= 11.0 incorrectly serializes years prior to 0 as negative
-        // four-digit years instead of six-digit years. Credits: @Yaffle.
-        JSON3.stringify(new Date(-621987552e5)) == '"-000001-01-01T00:00:00.000Z"' &&
-        // Safari <= 5.1.5 and Opera >= 10.53 incorrectly serialize millisecond
-        // values less than 1000. Credits: @Yaffle.
-        JSON3.stringify(new Date(-1)) == '"1969-12-31T23:59:59.999Z"';
-    } catch (exception) {
-      stringifySupported = false;
-    }
-  }
-
-  // Test `JSON.parse`.
-  if (typeof JSON3.parse == "function") {
-    try {
-      // FF 3.1b1, b2 will throw an exception if a bare literal is provided.
-      // Conforming implementations should also coerce the initial argument to
-      // a string prior to parsing.
-      if (JSON3.parse("0") === 0 && !JSON3.parse(false)) {
-        // Simple parsing test.
-        value = JSON3.parse(serialized);
-        if ((parseSupported = value.A.length == 5 && value.A[0] == 1)) {
-          try {
-            // Safari <= 5.1.2 and FF 3.1b1 allow unescaped tabs in strings.
-            parseSupported = !JSON3.parse('"\t"');
-          } catch (exception) {}
-          if (parseSupported) {
+    // Test `JSON.parse`.
+    if (typeof JSON3.parse == "function") {
+      try {
+        // FF 3.1b1, b2 will throw an exception if a bare literal is provided.
+        // Conforming implementations should also coerce the initial argument to
+        // a string prior to parsing.
+        if (JSON3.parse("0") === 0 && !JSON3.parse(false)) {
+          // Simple parsing test.
+          value = JSON3.parse(serialized);
+          if ((parseSupported = value.A.length == 5 && value.A[0] == 1)) {
             try {
-              // FF 4.0 and 4.0.1 allow leading `+` signs, and leading and
-              // trailing decimal points. FF 4.0, 4.0.1, and IE 9 also allow
-              // certain octal literals.
-              parseSupported = JSON3.parse("01") != 1;
+              // Safari <= 5.1.2 and FF 3.1b1 allow unescaped tabs in strings.
+              parseSupported = !JSON3.parse('"\t"');
             } catch (exception) {}
+            if (parseSupported) {
+              try {
+                // FF 4.0 and 4.0.1 allow leading `+` signs, and leading and
+                // trailing decimal points. FF 4.0, 4.0.1, and IE 9 also allow
+                // certain octal literals.
+                parseSupported = JSON3.parse("01") != 1;
+              } catch (exception) {}
+            }
           }
         }
+      } catch (exception) {
+        parseSupported = false;
       }
-    } catch (exception) {
-      parseSupported = false;
     }
+    return name == "json-stringify" ? stringifySupported :
+      name == "json-parse" ? parseSupported :
+      name == "json" ? stringifySupported && parseSupported :
+      false;
   }
 
-  // Clean up the variables used for the feature tests.
-  value = serialized = null;
-
-  if (!stringifySupported || !parseSupported) {
+  if (!has("json")) {
     // Internal: Determines if a property is a direct property of the given
     // object. Delegates to the native `Object#hasOwnProperty` method.
     if (!(isProperty = {}.hasOwnProperty)) {
@@ -276,7 +274,7 @@
     // indicates which properties should be serialized. The optional `width`
     // argument may be either a string or number that specifies the indentation
     // level of the output.
-    if (!stringifySupported) {
+    if (!has("json-stringify")) {
       // Internal: A map of control characters and their escaped equivalents.
       Escapes = {
         "\\": "\\\\",
@@ -308,7 +306,7 @@
           result += '\\"\b\f\n\r\t'.indexOf(symbol) > -1 ? Escapes[symbol] :
             // If the character is a control character, append its Unicode escape
             // sequence; otherwise, append the character as-is.
-            symbol < " " ? "\\u00" + toPaddedString(2, symbol.charCodeAt(0).toString(16)) : symbol;
+            (Escapes[symbol] = symbol < " " ? "\\u00" + toPaddedString(2, symbol.charCodeAt(0).toString(16)) : symbol);
         }
         return result + '"';
       };
@@ -316,7 +314,7 @@
       // Internal: Recursively serializes an object. Implements the
       // `Str(key, holder)`, `JO(value)`, and `JA(value)` operations.
       serialize = function (property, object, callback, properties, whitespace, indentation, stack) {
-        var value = object[property], className, year, month, date, time, hours, minutes, seconds, milliseconds, results, element, index, length, prefix, any;
+        var value = object[property], className, year, month, date, time, hours, minutes, seconds, milliseconds, results, element, index, length, prefix, any, result;
         if (typeof value == "object" && value) {
           className = getClass.call(value);
           if (className == "[object Date]" && !isProperty.call(value, "toJSON")) {
@@ -413,7 +411,7 @@
               element = serialize(index, value, callback, properties, whitespace, indentation, stack);
               results.push(element === undef ? "null" : element);
             }
-            return any ? (whitespace ? "[\n" + indentation + results.join(",\n" + indentation) + "\n" + prefix + "]" : ("[" + results.join(",") + "]")) : "[]";
+            result = any ? (whitespace ? "[\n" + indentation + results.join(",\n" + indentation) + "\n" + prefix + "]" : ("[" + results.join(",") + "]")) : "[]";
           } else {
             // Recursively serialize object members. Members are selected from
             // either a user-specified list of property names, or the object
@@ -431,10 +429,11 @@
               }
               any || (any = true);
             });
-            return any ? (whitespace ? "{\n" + indentation + results.join(",\n" + indentation) + "\n" + prefix + "}" : ("{" + results.join(",") + "}")) : "{}";
+            result = any ? (whitespace ? "{\n" + indentation + results.join(",\n" + indentation) + "\n" + prefix + "}" : ("{" + results.join(",") + "}")) : "{}";
           }
           // Remove the object from the traversed object stack.
           stack.pop();
+          return result;
         }
       };
 
@@ -469,7 +468,7 @@
     }
 
     // Public: Parses a JSON source string.
-    if (!parseSupported) {
+    if (!has("json-parse")) {
       fromCharCode = String.fromCharCode;
       // Internal: A map of escaped control characters and their unescaped
       // equivalents.
@@ -764,8 +763,11 @@
       };
     }
   }
+
+  // Export for asynchronous module loaders.
   if (isLoader) {
-      // Export for asynchronous module loaders. 
-      define(function () { return JSON3; });
+    define(function () {
+      return JSON3;
+    });
   }
 }).call(this);
